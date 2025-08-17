@@ -1,0 +1,28 @@
+FROM python:3.10.0-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Install frontend dependencies (lightweight)
+RUN pip install --no-cache-dir gradio==5.39.0 requests==2.32.4
+
+# Copy frontend code
+COPY frontend/ ./frontend/
+COPY frontend_run.py ./
+
+# Create non-root user
+RUN useradd -m appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 7860
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:7860 || exit 1
+
+CMD ["python", "frontend_run.py"]

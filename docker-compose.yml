@@ -1,0 +1,107 @@
+services:
+  ollama:
+    image: ollama/ollama
+    container_name: rag_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./ollama-entrypoint.sh:/ollama-entrypoint.sh
+    networks:
+      - rag_network
+    entrypoint: /ollama-entrypoint.sh
+
+  mongodb:
+    image: mongo:7-jammy
+    container_name: rag_mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      # If you have a mongo-init.js script, you can mount it here
+      # - ./mongo-init:/docker-entrypoint-initdb.d
+    environment:
+      # This sets the default database name on initialization
+      - MONGO_INITDB_DATABASE=rag_db
+    networks:
+      - rag_network
+    # Healthcheck ensures the backend waits until MongoDB is ready
+    healthcheck:
+      test: |
+        mongosh --host localhost --port 27017 --eval \
+        'db.runCommand("ping").ok' --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    # This now waits for the mongodb healthcheck to pass
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    links:
+      - ollama
+    volumes:
+      # Volumes for persistent data
+      - uploaded_docs:/app/uploaded_docs
+      - app_logs:/app/logs
+    environment:
+      # This is the correct URL for connecting to the 'mongodb' service within the Docker network
+      - MONGODB_URL=mongodb://mongodb:27017
+      # Ensure this matches the database name you want to use
+      - DATABASE_NAME=rag_db
+      # Pass the Pinecone API key from your host's environment or a .env file read by compose
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - PROJECT_NAME=Document RAG API
+      - UPLOAD_DIR=/app/uploaded_docs
+      - MISTRAL_BASE_URL=http://ollama:11434
+      - PYTHONPATH=/app
+    networks:
+      - rag_network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 45s
+      timeout: 30s
+      retries: 5
+      start_period: 300s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: rag_frontend
+    restart: unless-stopped
+    ports:
+      - "7860:7860"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      # The frontend connects to the backend using its service name
+      - API_URL=http://rag_backend:8000
+    networks:
+      - rag_network
+
+volumes:
+  mongodb_data:
+    driver: local
+  uploaded_docs:
+    driver: local
+  app_logs:
+    driver: local
+  ollama_data:
+    driver: local
+
+networks:
+  rag_network:
+    driver: bridge

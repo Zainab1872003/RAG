@@ -1,0 +1,6 @@
+# Start from the official Ollama image
+FROM ollama/ollama
+
+# Run a command to pull the mistral model during the image build process.
+# This ensures the model is available as soon as the container starts.
+RUN ollama pull mistral
